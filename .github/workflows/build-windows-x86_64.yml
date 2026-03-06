@@ -22,12 +22,13 @@ on:
         default: true
         type: boolean
       extensions:
-        description: "Extensions to compile (Windows compatible list)"
+        description: "Extensions to compile"
         required: true
-        default: "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
+        # Removed: pcntl, posix, readline, xsl (Unsupported on Windows static builds)
+        default: "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
         type: string
       prefer-pre-built:
-        description: "Prefer pre-built binaries (faster)"
+        description: "Prefer pre-built binaries"
         type: boolean
         default: true
       debug:
@@ -46,7 +47,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Setup PHP runtime to run the 'spc' builder tool
       - name: Setup PHP Runtime
         uses: shivammathur/setup-php@v2
         with:
@@ -54,19 +54,10 @@ jobs:
           extensions: mbstring, curl, openssl, tokenizer
           tools: composer
 
-      # 2. Cache/Install Composer dependencies for static-php-cli
-      - name: Cache Composer Dependencies
-        id: cache-composer
-        uses: actions/cache@v4
-        with:
-          path: vendor
-          key: composer-deps-${{ hashFiles('composer.json') }}
-
       - name: Install Tool Dependencies
-        if: steps.cache-composer.outputs.cache-hit != 'true'
-        run: composer update --no-dev --classmap-authoritative
+        run: |
+          composer update --no-dev --classmap-authoritative
 
-      # 3. Create unique cache key for PHP source downloads
       - name: Generate Cache Key
         shell: bash
         run: |
@@ -80,7 +71,6 @@ jobs:
           path: downloads
           key: php-src-${{ env.INPUT_HASH }}
 
-      # 4. Prepare Build Flags (PowerShell Syntax)
       - name: Prepare Flags
         shell: pwsh
         run: |
@@ -89,7 +79,6 @@ jobs:
           if ("${{ inputs.build-cli }}" -eq "true") { "SPC_BUILD_CLI=--build-cli" | Out-File -FilePath $env:GITHUB_ENV -Append }
           if ("${{ inputs.build-micro }}" -eq "true") { "SPC_BUILD_MICRO=--build-micro" | Out-File -FilePath $env:GITHUB_ENV -Append }
 
-      # 5. Build Process
       - name: SPC Doctor
         run: php bin/spc doctor
 
@@ -100,7 +89,11 @@ jobs:
       - name: Run Build
         run: php bin/spc build "${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_BUILD_CLI }} ${{ env.SPC_BUILD_MICRO }}
 
-      # 6. Upload Results
+      # Verification Step: Check if the binary works and list modules
+      - name: Verify Build
+        if: ${{ inputs.build-cli }}
+        run: buildroot/bin/php.exe -m
+
       - name: Upload PHP CLI
         if: ${{ inputs.build-cli }}
         uses: actions/upload-artifact@v4
