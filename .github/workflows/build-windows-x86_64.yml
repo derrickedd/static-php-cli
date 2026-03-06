@@ -10,9 +10,8 @@ on:
         type: choice
         options: ['8.4', '8.3', '8.2', '8.1']
       extensions:
-        description: "Stable Desktop List"
+        description: "Stable Extension List for NativePHP"
         required: true
-        # Removed bz2; JIT will be disabled via flag below
         default: "ctype,curl,dom,fileinfo,filter,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
         type: string
 
@@ -22,26 +21,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup PHP
+      - name: Setup PHP (Runner Environment)
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
           extensions: mbstring, curl, openssl
 
-      - name: Install Tool
+      - name: Install static-php-cli
         run: composer update --no-dev --classmap-authoritative
 
-      - name: SPC Doctor
+      - name: Run Doctor
         run: php bin/spc doctor
 
       - name: Download Sources
+        # This will fetch PHP and all required C libraries (zlib, openssl, etc.)
         run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" --prefer-pre-built
 
       - name: Run Build
-        # ADDED --no-jit to fix the compilation crash in PHP 8.4
-        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro --no-jit --debug
+        # --disable-opcache-jit fixes the 'gen_ir_fold_hash.exe' error on Windows
+        # --build-cli creates php.exe
+        # --build-micro creates micro.sfx (needed for NativePHP standalone)
+        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro --disable-opcache-jit --debug
 
-      - name: Dump Logs on Failure
+      - name: Debug Logs on Failure
         if: failure()
         shell: pwsh
         run: |
@@ -52,7 +54,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: php-${{ inputs.version }}-windows-native
+          name: php-${{ inputs.version }}-windows-static
           path: |
             buildroot/bin/php.exe
             buildroot/bin/micro.sfx
