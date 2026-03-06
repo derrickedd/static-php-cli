@@ -10,9 +10,9 @@ on:
         type: choice
         options: ['8.4', '8.3', '8.2', '8.1']
       extensions:
-        description: "Stabilized Windows List"
+        description: "Stable Desktop List"
         required: true
-        # Removed problematic GD and BZ2 to fix the ZLIB linking error
+        # Removed bz2; JIT will be disabled via flag below
         default: "ctype,curl,dom,fileinfo,filter,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
         type: string
 
@@ -38,8 +38,8 @@ jobs:
         run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" --prefer-pre-built
 
       - name: Run Build
-        # Added --debug to get the most information possible
-        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro --debug
+        # ADDED --no-jit to fix the compilation crash in PHP 8.4
+        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro --no-jit --debug
 
       - name: Dump Logs on Failure
         if: failure()
