@@ -11,10 +11,10 @@ on:
         options: ['8.4', '8.3', '8.2', '8.1']
 
 env:
-  # The list of PHP extensions you actually want
+  # The PHP extensions we want
   STABLE_EXTS: "ctype,curl,dom,fileinfo,filter,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
   
-  # The explicit list of libraries, excluding 'bzip2' to avoid the Windows conflict
+  # The libraries we want (explicitly excluding bzip2/bz2)
   STABLE_LIBS: "zlib,openssl,libssh2,libiconv-win,libxml2,nghttp2,curl,sqlite,libsodium,xz,libzip"
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
       - name: Setup PHP (Runner Environment)
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4' # Upgraded to 8.4 to clear the deprecation notice
+          php-version: '8.4'
           extensions: mbstring, curl, openssl
 
       - name: Install static-php-cli
@@ -36,16 +36,16 @@ jobs:
         run: php bin/spc doctor
 
       - name: Download Sources
-        # We explicitly tell it which libraries to download so it ignores bzip2
+        # DOWNLOAD uses --for-libs
         run: >
           php bin/spc download 
           --with-php="${{ inputs.version }}" 
           --for-extensions="${{ env.STABLE_EXTS }}" 
-          --with-libs="${{ env.STABLE_LIBS }}" 
+          --for-libs="${{ env.STABLE_LIBS }}" 
           --prefer-pre-built
 
       - name: Run Build
-        # We pass the library list here as well to ensure the build remains "locked" to our selection
+        # BUILD uses --with-libs
         run: >
           php bin/spc build "${{ env.STABLE_EXTS }}" 
           --with-libs="${{ env.STABLE_LIBS }}" 
