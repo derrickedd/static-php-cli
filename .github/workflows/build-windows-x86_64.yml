@@ -9,17 +9,11 @@ on:
         default: '8.4'
         type: choice
         options: ['8.4', '8.3', '8.2', '8.1']
-      build-cli:
-        default: true
-        type: boolean
-      build-micro:
-        default: true
-        type: boolean
       extensions:
-        description: "Windows-Safe Extensions"
+        description: "Stabilized Windows List"
         required: true
-        # Removed: pcntl, posix, readline, xsl, dba, redis, apcu
-        default: "bcmath,calendar,ctype,curl,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
+        # Removed problematic GD and BZ2 to fix the ZLIB linking error
+        default: "ctype,curl,dom,fileinfo,filter,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
         type: string
 
 jobs:
@@ -44,33 +38,21 @@ jobs:
         run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" --prefer-pre-built
 
       - name: Run Build
-        id: build-step
-        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro
+        # Added --debug to get the most information possible
+        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro --debug
 
-      # NEW: This will help us see EXACTLY what went wrong if it fails again
       - name: Dump Logs on Failure
         if: failure()
         shell: pwsh
         run: |
-          if (Test-Path "log/spc.output.log") {
-            Write-Host "--- LAST 100 LINES OF SPC OUTPUT LOG ---"
-            Get-Content "log/spc.output.log" -Tail 100
-          }
-          if (Test-Path "log/spc.shell.log") {
-            Write-Host "--- LAST 100 LINES OF SHELL LOG ---"
-            Get-Content "log/spc.shell.log" -Tail 100
-          }
+          if (Test-Path "log/spc.output.log") { Get-Content "log/spc.output.log" -Tail 200 }
+          if (Test-Path "log/spc.shell.log") { Get-Content "log/spc.shell.log" -Tail 200 }
 
-      - name: Upload PHP CLI
-        if: success() && inputs.build-cli
+      - name: Upload Artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: php-${{ inputs.version }}-windows
-          path: buildroot/bin/php.exe
-
-      - name: Upload Micro SAPI
-        if: success() && inputs.build-micro
-        uses: actions/upload-artifact@v4
-        with:
-          name: micro-${{ inputs.version }}-windows
-          path: buildroot/bin/micro.sfx
+          name: php-${{ inputs.version }}-windows-native
+          path: |
+            buildroot/bin/php.exe
+            buildroot/bin/micro.sfx
