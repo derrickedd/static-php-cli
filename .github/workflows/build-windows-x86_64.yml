@@ -1,11 +1,11 @@
-name: CI on x86_64 Windows
+name: CI on Windows (x86_64)
 
 on:
   workflow_dispatch:
     inputs:
       version:
         required: true
-        description: php version to compile
+        description: "PHP version to compile"
         default: '8.4'
         type: choice
         options:
@@ -13,90 +13,104 @@ on:
           - '8.3'
           - '8.2'
           - '8.1'
-          - '8.0'
       build-cli:
-        description: build cli binary
+        description: "Build CLI binary (php.exe)"
         default: true
         type: boolean
       build-micro:
-        description: build phpmicro binary
+        description: "Build micro binary (micro.sfx for NativePHP)"
+        default: true
         type: boolean
       extensions:
-        description: extensions to compile (comma separated)
+        description: "Extensions to compile (Windows compatible list)"
         required: true
-        # REMINDER: Remove pcntl and posix for Windows builds!
-        default: "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,readline,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
+        default: "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
         type: string
       prefer-pre-built:
-        description: prefer pre-built binaries
+        description: "Prefer pre-built binaries (faster)"
         type: boolean
         default: true
       debug:
-        description: enable debug logs
+        description: "Enable debug logs"
         type: boolean
+        default: false
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  build:
-    name: build ${{ inputs.version }} on Windows x86_64
+  build-windows:
+    name: Build PHP ${{ inputs.version }} (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      # 1. Setup PHP to run the 'spc' tool itself
-      - name: Setup PHP
+      # 1. Setup PHP runtime to run the 'spc' builder tool
+      - name: Setup PHP Runtime
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3' 
-          extensions: mbstring, curl, openssl
+          php-version: '8.3'
+          extensions: mbstring, curl, openssl, tokenizer
+          tools: composer
 
-      - id: cache-composer-deps
+      # 2. Cache/Install Composer dependencies for static-php-cli
+      - name: Cache Composer Dependencies
+        id: cache-composer
         uses: actions/cache@v4
         with:
           path: vendor
-          key: composer-dependencies
+          key: composer-deps-${{ hashFiles('composer.json') }}
 
-      - if: steps.cache-composer-deps.outputs.cache-hit != 'true'
+      - name: Install Tool Dependencies
+        if: steps.cache-composer.outputs.cache-hit != 'true'
         run: composer update --no-dev --classmap-authoritative
 
-      - name: Generate hashed key for download cache
+      # 3. Create unique cache key for PHP source downloads
+      - name: Generate Cache Key
         shell: bash
         run: |
           INPUT_HASH=$(echo "${{ runner.os }}-${{ inputs.version }}-${{ inputs.extensions }}" | sha256sum | awk '{print $1}')
           echo "INPUT_HASH=${INPUT_HASH}" >> "$GITHUB_ENV"
 
-      - id: cache-download
+      - name: Cache PHP Sources
+        id: cache-download
         uses: actions/cache@v4
         with:
           path: downloads
-          key: php-${{ env.INPUT_HASH }}
+          key: php-src-${{ env.INPUT_HASH }}
 
-      # 2. Correctly setting Env Vars using PowerShell syntax (default on Windows)
-      - name: Set Build Arguments
+      # 4. Prepare Build Flags (PowerShell Syntax)
+      - name: Prepare Flags
+        shell: pwsh
         run: |
-          if ("${{ inputs.debug }}" -eq "true") { echo "SPC_BUILD_DEBUG=--debug" >> $env:GITHUB_ENV }
-          if ("${{ inputs.prefer-pre-built }}" -eq "true") { echo "SPC_PRE_BUILT=--prefer-pre-built" >> $env:GITHUB_ENV }
-          if ("${{ inputs.build-cli }}" -eq "true") { echo "SPC_BUILD_CLI=--build-cli" >> $env:GITHUB_ENV }
-          if ("${{ inputs.build-micro }}" -eq "true") { echo "SPC_BUILD_MICRO=--build-micro" >> $env:GITHUB_ENV }
+          if ("${{ inputs.debug }}" -eq "true") { "SPC_BUILD_DEBUG=--debug" | Out-File -FilePath $env:GITHUB_ENV -Append }
+          if ("${{ inputs.prefer-pre-built }}" -eq "true") { "SPC_PRE_BUILT=--prefer-pre-built" | Out-File -FilePath $env:GITHUB_ENV -Append }
+          if ("${{ inputs.build-cli }}" -eq "true") { "SPC_BUILD_CLI=--build-cli" | Out-File -FilePath $env:GITHUB_ENV -Append }
+          if ("${{ inputs.build-micro }}" -eq "true") { "SPC_BUILD_MICRO=--build-micro" | Out-File -FilePath $env:GITHUB_ENV -Append }
 
-      - run: php bin/spc doctor
+      # 5. Build Process
+      - name: SPC Doctor
+        run: php bin/spc doctor
 
-      - if: steps.cache-download.outputs.cache-hit != 'true'
+      - name: Download Sources
+        if: steps.cache-download.outputs.cache-hit != 'true'
         run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_PRE_BUILT }}
 
-      # 3. Running the build (Note: 'php' prefix ensures it uses the setup-php version)
-      - run: php bin/spc build "${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_BUILD_CLI }} ${{ env.SPC_BUILD_MICRO }}
+      - name: Run Build
+        run: php bin/spc build "${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_BUILD_CLI }} ${{ env.SPC_BUILD_MICRO }}
 
-      - if: ${{ inputs.build-cli == true }}
+      # 6. Upload Results
+      - name: Upload PHP CLI
+        if: ${{ inputs.build-cli }}
         uses: actions/upload-artifact@v4
         with:
-          name: php-${{ inputs.version }}-windows
+          name: php-${{ inputs.version }}-windows-x64
           path: buildroot/bin/php.exe
 
-      - if: ${{ inputs.build-micro == true }}
+      - name: Upload Micro SAPI
+        if: ${{ inputs.build-micro }}
         uses: actions/upload-artifact@v4
         with:
-          name: micro-${{ inputs.version }}-windows
+          name: micro-${{ inputs.version }}-windows-x64
           path: buildroot/bin/micro.sfx
