@@ -5,105 +5,72 @@ on:
     inputs:
       version:
         required: true
-        description: "PHP version to compile"
+        description: "PHP version"
         default: '8.4'
         type: choice
-        options:
-          - '8.4'
-          - '8.3'
-          - '8.2'
-          - '8.1'
+        options: ['8.4', '8.3', '8.2', '8.1']
       build-cli:
-        description: "Build CLI binary (php.exe)"
         default: true
         type: boolean
       build-micro:
-        description: "Build micro binary (micro.sfx for NativePHP)"
         default: true
         type: boolean
       extensions:
-        description: "Extensions to compile"
+        description: "Windows-Safe Extensions"
         required: true
-        # Removed: pcntl, posix, readline, xsl (Unsupported on Windows static builds)
-        default: "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
+        # Removed: pcntl, posix, readline, xsl, dba, redis, apcu
+        default: "bcmath,calendar,ctype,curl,dom,exif,fileinfo,filter,gd,iconv,mbstring,mysqli,mysqlnd,opcache,openssl,pdo,pdo_mysql,pdo_sqlite,phar,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,zip,zlib"
         type: string
-      prefer-pre-built:
-        description: "Prefer pre-built binaries"
-        type: boolean
-        default: true
-      debug:
-        description: "Enable debug logs"
-        type: boolean
-        default: false
-
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   build-windows:
-    name: Build PHP ${{ inputs.version }} (Windows)
     runs-on: windows-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup PHP Runtime
+      - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mbstring, curl, openssl, tokenizer
-          tools: composer
+          extensions: mbstring, curl, openssl
 
-      - name: Install Tool Dependencies
-        run: |
-          composer update --no-dev --classmap-authoritative
-
-      - name: Generate Cache Key
-        shell: bash
-        run: |
-          INPUT_HASH=$(echo "${{ runner.os }}-${{ inputs.version }}-${{ inputs.extensions }}" | sha256sum | awk '{print $1}')
-          echo "INPUT_HASH=${INPUT_HASH}" >> "$GITHUB_ENV"
-
-      - name: Cache PHP Sources
-        id: cache-download
-        uses: actions/cache@v4
-        with:
-          path: downloads
-          key: php-src-${{ env.INPUT_HASH }}
-
-      - name: Prepare Flags
-        shell: pwsh
-        run: |
-          if ("${{ inputs.debug }}" -eq "true") { "SPC_BUILD_DEBUG=--debug" | Out-File -FilePath $env:GITHUB_ENV -Append }
-          if ("${{ inputs.prefer-pre-built }}" -eq "true") { "SPC_PRE_BUILT=--prefer-pre-built" | Out-File -FilePath $env:GITHUB_ENV -Append }
-          if ("${{ inputs.build-cli }}" -eq "true") { "SPC_BUILD_CLI=--build-cli" | Out-File -FilePath $env:GITHUB_ENV -Append }
-          if ("${{ inputs.build-micro }}" -eq "true") { "SPC_BUILD_MICRO=--build-micro" | Out-File -FilePath $env:GITHUB_ENV -Append }
+      - name: Install Tool
+        run: composer update --no-dev --classmap-authoritative
 
       - name: SPC Doctor
         run: php bin/spc doctor
 
       - name: Download Sources
-        if: steps.cache-download.outputs.cache-hit != 'true'
-        run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_PRE_BUILT }}
+        run: php bin/spc download --with-php="${{ inputs.version }}" --for-extensions="${{ inputs.extensions }}" --prefer-pre-built
 
       - name: Run Build
-        run: php bin/spc build "${{ inputs.extensions }}" ${{ env.SPC_BUILD_DEBUG }} ${{ env.SPC_BUILD_CLI }} ${{ env.SPC_BUILD_MICRO }}
+        id: build-step
+        run: php bin/spc build "${{ inputs.extensions }}" --build-cli --build-micro
 
-      # Verification Step: Check if the binary works and list modules
-      - name: Verify Build
-        if: ${{ inputs.build-cli }}
-        run: buildroot/bin/php.exe -m
+      # NEW: This will help us see EXACTLY what went wrong if it fails again
+      - name: Dump Logs on Failure
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path "log/spc.output.log") {
+            Write-Host "--- LAST 100 LINES OF SPC OUTPUT LOG ---"
+            Get-Content "log/spc.output.log" -Tail 100
+          }
+          if (Test-Path "log/spc.shell.log") {
+            Write-Host "--- LAST 100 LINES OF SHELL LOG ---"
+            Get-Content "log/spc.shell.log" -Tail 100
+          }
 
       - name: Upload PHP CLI
-        if: ${{ inputs.build-cli }}
+        if: success() && inputs.build-cli
         uses: actions/upload-artifact@v4
         with:
-          name: php-${{ inputs.version }}-windows-x64
+          name: php-${{ inputs.version }}-windows
           path: buildroot/bin/php.exe
 
       - name: Upload Micro SAPI
-        if: ${{ inputs.build-micro }}
+        if: success() && inputs.build-micro
         uses: actions/upload-artifact@v4
         with:
-          name: micro-${{ inputs.version }}-windows-x64
+          name: micro-${{ inputs.version }}-windows
           path: buildroot/bin/micro.sfx
